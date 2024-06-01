@@ -3,14 +3,19 @@ This repository contains the ROS packages for 3D Lidar Mapping Stack. The stack 
 
 ## Inflation costmap output
 <img src="src/Outputs/inflated.png" alt="inflated" width="800"/>
-<img src="src/Outputs/noninflated.png" alt="noninflated" width="800"/>>
+<img src="src/Outputs/noninflated.png" alt="noninflated" width="800"/>
 
 
-The above output has 3 informations, the colorfull cells you see are the inflated cost cells, whose inflation radius is set as per robot's footprint. For instance the Warthog is 1.52m long and 1.38m wide. For a rectangular robot, the inflation radius should be set to cover the dimensions of the robot and include a safety margin. Since our robot has a rectangular frame with dimensions 1.52m long and 1.38m wide, you can set the inflation radius based on the half-diagonal of the rectangle to ensure that the entire robot footprint is covered.
+The above output has 3 informations, the colorfull cells you see are the inflated cost cells, whose inflation radius is set as per robot's footprint. For instance the Warthog is 1.52m long and 1.38m wide. For a rectangular robot, the inflation radius should be set to cover the dimensions of the robot and include a safety margin. Since our robot has a rectangular frame with dimensions 1.52m long and 1.38m wide, you can set the inflation radius `r` based on the half-diagonal of the rectangle to ensure that the entire robot footprint is covered.
 
+```math
 $$
-Inflation Radius = \frac{\sqrt{1.52^2 + 1.38^2}}{2} = 1.02m
+\begin{equation}
+    r = \frac{\sqrt{1.52^2 + 1.38^2}}{2} = 1.02m
+\end{equation}
 $$
+```
+
 I kept the safe margin to round off this value upto 1.3m.
 
 For free cells, they also needs to be inflated, hence for free cells the surrounding cells should also be classified as free if they are within the wheel radius so that the robot can safely traverse.
