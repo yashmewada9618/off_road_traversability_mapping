@@ -2,8 +2,8 @@
 
 
 ## Inflation costmap output
-<img src="src/costmap_pub/Outputs/InflatedOcc.png" alt="inflated" width="800"/>
-<img src="src/costmap_pub/Outputs/noninflated.png" alt="noninflated" width="800"/>>
+<img src="src/Outputs/inflated.png" alt="inflated" width="800"/>
+<img src="src/Outputs/noninflated.png" alt="noninflated" width="800"/>>
 
 
 The above output has 3 informations, the colorfull cells you see are the inflated cost cells, whose inflation radius is set as per robot's footprint. For instance the Warthog is 1.52m long and 1.38m wide. For a rectangular robot, the inflation radius should be set to cover the dimensions of the robot and include a safety margin. Since our robot has a rectangular frame with dimensions 1.52m long and 1.38m wide, you can set the inflation radius based on the half-diagonal of the rectangle to ensure that the entire robot footprint is covered.
