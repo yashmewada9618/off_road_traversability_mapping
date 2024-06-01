@@ -27,6 +27,16 @@ LaserScanToOccupancyGrid::~LaserScanToOccupancyGrid()
     cout << YELLOW << "[+] Performing Clean up..." << RESET << endl;
 }
 
+int LaserScanToOccupancyGrid::getGridValue(int cellX, int cellY)
+{
+    return occupancy_grid_msg_.data[cellY * occupancy_grid_msg_.info.width + cellX];
+}
+
+void LaserScanToOccupancyGrid::setGridValue(int x, int y, int value)
+{
+    occupancy_grid_msg_.data[y * occupancy_grid_msg_.info.width + x] = value;
+}
+
 void LaserScanToOccupancyGrid::initializeOccupancyGrid(int scan_size)
 {
     // Set occupancy grid parameters (width, height, resolution, origin, etc.)
@@ -45,45 +55,35 @@ void LaserScanToOccupancyGrid::initializeOccupancyGrid(int scan_size)
     prior_map_.setConstant(GridStates::UNKNOWN);
 }
 
-pcl::PointCloud<pcl::PointXYZ> LaserScanToOccupancyGrid::transformPCL(pcl::PointCloud<pcl::PointXYZ> pcl_cloud)
+pcl::PointCloud<pcl::PointXYZ> LaserScanToOccupancyGrid::transformPCL(const pcl::PointCloud<pcl::PointXYZ> &pcl_cloud)
 {
-    // Transform the 3d pointcloud such that the robot is at the origin
-
-    pcl::PointCloud<pcl::PointXYZ> pcl_cloud_transformed;
-    for (size_t i = 0; i < pcl_cloud.size(); ++i)
+    pcl::PointCloud<pcl::PointXYZ> pcl_cloud_transformed = pcl_cloud;
+    for (auto &point : pcl_cloud_transformed)
     {
-        pcl::PointXYZ p;
-        p.x = pcl_cloud[i].x;
-        p.y = pcl_cloud[i].y;
-        p.z = pcl_cloud[i].z + lidarShift_;
-        pcl_cloud_transformed.push_back(p);
+        point.z += lidarShift_;
     }
     return pcl_cloud_transformed;
 }
-
 bool LaserScanToOccupancyGrid::checkbounds(int cellX, int cellY)
 {
-    if (cellX < 0 || cellX >= occupancy_grid_msg_.info.width || cellY < 0 || cellY >= occupancy_grid_msg_.info.height)
-    {
-        return false;
-    }
-    return true;
+    return cellX >= 0 && cellX < occupancy_grid_msg_.info.width && cellY >= 0 &&
+           cellY < occupancy_grid_msg_.info.height;
 }
 
 unsigned char LaserScanToOccupancyGrid::getCostforCell(double distance) const
 {
-    double inscribed_radius_ = 0.1;
-    double cost_scaling_factor_ = 2.0; // A higher value means the cost decays faster with distance
+    double inscribed_radius = 0.1;
+    double cost_scaling_factor = 2.0; // A higher value means the cost decays faster with distance
     unsigned char cost = 0;
 
     if (distance == 0.0)
         cost = GridStates::LETHAL_OBSTACLE;
-    else if (distance * map_resolution_ <= inscribed_radius_)
+    else if (distance * map_resolution_ <= inscribed_radius)
         cost = GridStates::INSCRIBED_INFLATED_OBSTACLE;
     else
     {
         // Make sure that the cost decays by euclidean distance
-        double factor = exp(-1.0 * cost_scaling_factor_ * (distance * map_resolution_ - inscribed_radius_));
+        double factor = exp(-1.0 * cost_scaling_factor * (distance * map_resolution_ - inscribed_radius));
         cost = static_cast<unsigned char>((GridStates::INSCRIBED_INFLATED_OBSTACLE - 1) * factor);
     }
     return cost;
@@ -101,22 +101,21 @@ void LaserScanToOccupancyGrid::inflateCostAroundCells(int cellX, int cellY, int 
             // Check if the neighbor cell indices are within the grid bounds
             if (LaserScanToOccupancyGrid::checkbounds(neighbor_x, neighbor_y))
             {
-                int current_cost = occupancy_grid_msg_.data[neighbor_y * occupancy_grid_msg_.info.width + neighbor_x];
+                int current_cost = LaserScanToOccupancyGrid::getGridValue(neighbor_x, neighbor_y);
 
                 // cout << "Current cost: " << current_cost << endl;
                 if (current_cost == GridStates::OCCUPIED)
                 {
                     // Calculate the distance from an obstacle in cells
-                    double distance = std::sqrt(std::pow(neighbor_x - cellX, 2) + std::pow(neighbor_y - cellY, 2));
-                    occupancy_grid_msg_.data[neighbor_y * occupancy_grid_msg_.info.width + neighbor_x] =
-                        GridStates(LaserScanToOccupancyGrid::getCostforCell(distance));
+                    double distance = std::hypot(neighbor_x - cellX, neighbor_y - cellY);
+                    int hypot_cost = GridStates(LaserScanToOccupancyGrid::getCostforCell(distance));
+
+                    LaserScanToOccupancyGrid::setGridValue(neighbor_x, neighbor_y, hypot_cost);
                 }
                 else if (current_cost == GridStates::TRAVERSABLE || current_cost == GridStates::UNKNOWN ||
                          current_cost == -1)
                 {
-                    // cout << "Occupied cell" << endl;
-                    // map_(neighbor_y, neighbor_x) = max_inflation_cost;
-                    occupancy_grid_msg_.data[neighbor_y * occupancy_grid_msg_.info.width + neighbor_x] = cost;
+                    LaserScanToOccupancyGrid::setGridValue(neighbor_x, neighbor_y, cost);
                 }
             }
         }
@@ -127,24 +126,25 @@ void LaserScanToOccupancyGrid::updateOccGrid(int cellX, int cellY, GridStates st
 {
     if (LaserScanToOccupancyGrid::checkbounds(cellX, cellY))
     {
-        switch (state)
+        // Update the occupancy grid with the given state
+        LaserScanToOccupancyGrid::setGridValue(cellX, cellY, state);
+
+        // Determine if the cell is occupied or traversable
+        const bool is_occupied = (state == GridStates::OCCUPIED);
+        const bool is_traversable = (state == GridStates::TRAVERSABLE);
+
+        // Define the inflation radius based on the state
+        const int radius = is_occupied ? 5 : (is_traversable ? 6 : 0);
+
+        // Inflate the cost around the cells if the state is OCCUPIED or TRAVERSABLE
+        if (is_occupied || is_traversable)
         {
-        case GridStates::OCCUPIED: {
-            occupancy_grid_msg_.data[cellY * occupancy_grid_msg_.info.width + cellX] = GridStates::OCCUPIED;
-            LaserScanToOccupancyGrid::inflateCostAroundCells(cellX, cellY, 5, GridStates::OCCUPIED);
-            break;
+            LaserScanToOccupancyGrid::inflateCostAroundCells(cellX, cellY, radius, state);
         }
-        case GridStates::TRAVERSABLE: {
-            occupancy_grid_msg_.data[cellY * occupancy_grid_msg_.info.width + cellX] = GridStates::TRAVERSABLE;
-            LaserScanToOccupancyGrid::inflateCostAroundCells(cellX, cellY, 6, GridStates::TRAVERSABLE);
-            break;
-        }
-        case GridStates::UNKNOWN: {
-            occupancy_grid_msg_.data[cellY * occupancy_grid_msg_.info.width + cellX] = GridStates::UNKNOWN;
-            break;
-        }
-        default:
-            break;
+        else
+        {
+            // If the state is UNKNOWN, set the cost to -1
+            LaserScanToOccupancyGrid::setGridValue(cellX, cellY, GridStates::UNKNOWN);
         }
     }
 }
@@ -208,8 +208,8 @@ void LaserScanToOccupancyGrid::updatePriorMap()
         auto timeElapsed = ms.count() - entry.second.time_;
         if (LaserScanToOccupancyGrid::checkbounds(entry.second.cell_x_, entry.second.cell_y_) && timeElapsed >= 2000)
         {
-            prior_map_(entry.second.cell_y_, entry.second.cell_x_) = static_cast<int>(
-                occupancy_grid_msg_.data[entry.second.cell_y_ * occupancy_grid_msg_.info.width + entry.second.cell_x_]);
+            prior_map_(entry.second.cell_y_, entry.second.cell_x_) =
+                static_cast<int>(LaserScanToOccupancyGrid::getGridValue(entry.second.cell_x_, entry.second.cell_y_));
             entry.second.time_ = ms.count();
             printFlag = true;
         }
@@ -225,22 +225,13 @@ void LaserScanToOccupancyGrid::fillwithMemory()
     {
         if (LaserScanToOccupancyGrid::checkbounds(entry.second.cell_x_, entry.second.cell_y_))
         {
-            int occState =
-                occupancy_grid_msg_.data[entry.second.cell_y_ * occupancy_grid_msg_.info.width + entry.second.cell_x_];
+            int occState = LaserScanToOccupancyGrid::getGridValue(entry.second.cell_x_, entry.second.cell_y_);
             int priorState = prior_map_(entry.second.cell_y_, entry.second.cell_x_);
             if ((occState == -1 && priorState != -1) ||
                 (occState == GridStates::UNKNOWN && priorState != GridStates::UNKNOWN) ||
                 (occState == 255 && priorState != 255))
             {
-                // cout << "Occupancy state Before : " << occState << " | "
-                //           << "Prior state : " << priorState << " | ";
-                occupancy_grid_msg_.data[entry.second.cell_y_ * occupancy_grid_msg_.info.width + entry.second.cell_x_] =
-                    priorState;
-                // cout << "Occupancy state After : "
-                //           << int(occupancy_grid_msg_
-                //                      .data[entry.second.cell_y_ * occupancy_grid_msg_.info.width +
-                //                      entry.second.cell_x_])
-                //           << endl;
+                LaserScanToOccupancyGrid::setGridValue(entry.second.cell_x_, entry.second.cell_y_, priorState);
 
                 printFlag = true;
             }
@@ -252,7 +243,7 @@ void LaserScanToOccupancyGrid::fillwithMemory()
 
 void LaserScanToOccupancyGrid::updateOdom(double delta_x, double delta_y, double delta_yaw)
 {
-    Eigen::MatrixXd tempMap;
+    Eigen::Matrix3d tempMap;
     tempMap.resize(occupancy_grid_msg_.info.height, occupancy_grid_msg_.info.width);
     tempMap.setConstant(GridStates::UNKNOWN);
 
@@ -263,7 +254,7 @@ void LaserScanToOccupancyGrid::updateOdom(double delta_x, double delta_y, double
     double delta_yaw_sin = sin(delta_yaw);
 
     //   convert these values into a transformation matrix.
-    Eigen::MatrixXd transform(3, 3);
+    Eigen::Matrix3d transform;
     transform << delta_yaw_cos, -delta_yaw_sin, delta_x_cell, delta_yaw_sin, delta_yaw_cos, delta_y_cell, 0.0, 0.0, 1.0;
 
     //    Iterate through the occupancy grid and transform each cell
@@ -271,11 +262,11 @@ void LaserScanToOccupancyGrid::updateOdom(double delta_x, double delta_y, double
     {
         for (auto j = 0; j < occupancy_grid_msg_.info.width; ++j)
         {
-            Eigen::MatrixXd cell(3, 1);
+            Eigen::Matrix3d cell;
             cell << j - occupancy_grid_msg_.info.height / 2, i - occupancy_grid_msg_.info.width / 2,
                 1.0; // Transform the cell indices to the center of the grid
 
-            Eigen::MatrixXd transformed_cell = transform * cell;
+            Eigen::Matrix3d transformed_cell = transform * cell;
 
             transformed_cell(0) += occupancy_grid_msg_.info.height / 2;
             transformed_cell(1) += occupancy_grid_msg_.info.width / 2;
@@ -285,7 +276,7 @@ void LaserScanToOccupancyGrid::updateOdom(double delta_x, double delta_y, double
             {
                 // Update the temporary map with the cell data
                 tempMap(int(transformed_cell(0)), int(transformed_cell(1))) =
-                    static_cast<int>(occupancy_grid_msg_.data[i * occupancy_grid_msg_.info.width + j]);
+                    static_cast<int>(LaserScanToOccupancyGrid::getGridValue(j, i));
             }
         }
     }
@@ -295,7 +286,7 @@ void LaserScanToOccupancyGrid::updateOdom(double delta_x, double delta_y, double
     {
         for (auto j = 0; j < occupancy_grid_msg_.info.width; ++j)
         {
-            occupancy_grid_msg_.data[i * occupancy_grid_msg_.info.width + j] = static_cast<int>(tempMap(i, j));
+            LaserScanToOccupancyGrid::setGridValue(j, i, tempMap(i, j));
         }
     }
 }
