@@ -6,7 +6,7 @@ This repository contains the ROS packages for 3D Lidar Mapping Stack. The stack 
 <img src="src/Outputs/noninflated.png" alt="noninflated" width="800"/>
 
 
-The above output has 3 informations, the colorfull cells you see are the inflated cost cells, whose inflation radius is set as per robot's footprint. For instance the Warthog is 1.52m long and 1.38m wide. For a rectangular robot, the inflation radius should be set to cover the dimensions of the robot and include a safety margin. Since our robot has a rectangular frame with dimensions 1.52m long and 1.38m wide, you can set the inflation radius `r` based on the half-diagonal of the rectangle to ensure that the entire robot footprint is covered.
+The above output has 3 information, the colorful cells you see are the inflated cost cells, whose inflation radius is set as per robot's footprint. For instance the Warthog is 1.52m long and 1.38m wide. For a rectangular robot, the inflation radius should be set to cover the dimensions of the robot and include a safety margin. Since our robot has a rectangular frame with dimensions 1.52m long and 1.38m wide, you can set the inflation radius `r` based on the half-diagonal of the rectangle to ensure that the entire robot footprint is covered.
 
 ```math
 $$
@@ -23,7 +23,7 @@ For free cells, they also needs to be inflated, hence for free cells the surroun
 
 
 ## Occupancy Grid
-The occupancy grid contruction in this repo will publish a 2D occupancy grid from a 3D Lidar Point Cloud. The occupancy grid is published on the topic `/map` and can be visualized in RViz.Currently the pointclouds has been classified as `Z > 0` and `Z < 0`, and then Ray Tracing is performed for now to get the occupancy grid map running.
+The occupancy grid construction in this repo will publish a 2D occupancy grid from a 3D Lidar Point Cloud. The occupancy grid is published on the topic `/map` and can be visualized in RViz.Currently the pointclouds has been classified as `Z > 0` and `Z < 0`, and then Ray Tracing is performed for now to get the occupancy grid map running.
 
 Algorithms like Principal Component Analysis (PCA) in which the pointclouds are projected on the ground plane and then the ground plane is segmented from the pointclouds can be used to get the ground plane. This approach tries to find the normal to every 3D point and depending on its thershold deviation from the ground plane, the point is classified as ground or non-ground. This approach has some algorithmic issues which needs to be resolved and will be updated soon.
 

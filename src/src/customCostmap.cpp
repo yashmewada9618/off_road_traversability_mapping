@@ -1,4 +1,5 @@
 #include "costmap_pub/customCostmap.h"
+
 #include "rclcpp/rclcpp.hpp"
 
 LaserScanToOccupancyGrid::LaserScanToOccupancyGrid(bool publish_gnd) : rclcpp::Node("laser_scan_to_occupancy_grid")
@@ -18,7 +19,7 @@ LaserScanToOccupancyGrid::LaserScanToOccupancyGrid(bool publish_gnd) : rclcpp::N
 
     occupancy_grid_publisher_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("occupancy_grid", 1000);
     // Initialize the occupancy grid
-    LaserScanToOccupancyGrid::initializeOccupancyGrid(scan_size); // Set the size of your scan
+    LaserScanToOccupancyGrid::initializeOccupancyGrid(scan_size);  // Set the size of your scan
     cout << BLUE << "Occupancy grid initialized with size : " << (scan_size / map_resolution_) << RESET << endl;
 }
 
@@ -43,9 +44,10 @@ void LaserScanToOccupancyGrid::initializeOccupancyGrid(int scan_size)
     occupancy_grid_msg_.header.frame_id = "map";
     occupancy_grid_msg_.info.width = scan_size / map_resolution_;
     occupancy_grid_msg_.info.height = scan_size / map_resolution_;
-    occupancy_grid_msg_.info.resolution = map_resolution_; // Set your desired resolution
-    occupancy_grid_msg_.info.origin.position.x = 0.0;
-    occupancy_grid_msg_.info.origin.position.y = 0.0;
+    occupancy_grid_msg_.info.resolution = map_resolution_;  // Set your desired resolution
+    // Center the grid on the robot: origin is bottom-left corner
+    occupancy_grid_msg_.info.origin.position.x = -scan_size / 2.0;
+    occupancy_grid_msg_.info.origin.position.y = -scan_size / 2.0;
     // Initialize the occupancy grid data to all unknown (-1) values
     occupancy_grid_msg_.data.resize(occupancy_grid_msg_.info.height * occupancy_grid_msg_.info.width,
                                     GridStates::UNKNOWN);
@@ -55,10 +57,10 @@ void LaserScanToOccupancyGrid::initializeOccupancyGrid(int scan_size)
     prior_map_.setConstant(GridStates::UNKNOWN);
 }
 
-pcl::PointCloud<pcl::PointXYZ> LaserScanToOccupancyGrid::transformPCL(const pcl::PointCloud<pcl::PointXYZ> &pcl_cloud)
+pcl::PointCloud<pcl::PointXYZ> LaserScanToOccupancyGrid::transformPCL(const pcl::PointCloud<pcl::PointXYZ>& pcl_cloud)
 {
     pcl::PointCloud<pcl::PointXYZ> pcl_cloud_transformed = pcl_cloud;
-    for (auto &point : pcl_cloud_transformed)
+    for (auto& point : pcl_cloud_transformed)
     {
         point.z += lidarShift_;
     }
@@ -73,7 +75,7 @@ bool LaserScanToOccupancyGrid::checkbounds(int cellX, int cellY)
 unsigned char LaserScanToOccupancyGrid::getCostforCell(double distance) const
 {
     double inscribed_radius = 0.1;
-    double cost_scaling_factor = 2.0; // A higher value means the cost decays faster with distance
+    double cost_scaling_factor = 2.0;  // A higher value means the cost decays faster with distance
     unsigned char cost = 0;
 
     if (distance == 0.0)
@@ -89,7 +91,7 @@ unsigned char LaserScanToOccupancyGrid::getCostforCell(double distance) const
     return cost;
 }
 
-void LaserScanToOccupancyGrid::inflateCostAroundCells(int cellX, int cellY, int radius, int cost)
+void LaserScanToOccupancyGrid::inflateCostAroundCells(int cellX, int cellY, int radius)
 {
     // Iterate through the cells around the occupied cell within the inflation radius
     for (int i = -radius; i <= radius; ++i)
@@ -103,19 +105,18 @@ void LaserScanToOccupancyGrid::inflateCostAroundCells(int cellX, int cellY, int 
             {
                 int current_cost = LaserScanToOccupancyGrid::getGridValue(neighbor_x, neighbor_y);
 
-                // cout << "Current cost: " << current_cost << endl;
-                if (current_cost == GridStates::OCCUPIED)
-                {
-                    // Calculate the distance from an obstacle in cells
-                    double distance = std::hypot(neighbor_x - cellX, neighbor_y - cellY);
-                    int hypot_cost = GridStates(LaserScanToOccupancyGrid::getCostforCell(distance));
+                // Skip the source cell and existing lethal obstacles
+                if (current_cost == GridStates::LETHAL_OBSTACLE)
+                    continue;
 
-                    LaserScanToOccupancyGrid::setGridValue(neighbor_x, neighbor_y, hypot_cost);
-                }
-                else if (current_cost == GridStates::TRAVERSABLE || current_cost == GridStates::UNKNOWN ||
-                         current_cost == -1)
+                // Calculate the distance-decayed cost from the source cell
+                double distance = std::hypot(neighbor_x - cellX, neighbor_y - cellY);
+                int inflated_cost = static_cast<int>(LaserScanToOccupancyGrid::getCostforCell(distance));
+
+                // Only overwrite if the new inflated cost is higher than current
+                if (inflated_cost > current_cost)
                 {
-                    LaserScanToOccupancyGrid::setGridValue(neighbor_x, neighbor_y, cost);
+                    LaserScanToOccupancyGrid::setGridValue(neighbor_x, neighbor_y, inflated_cost);
                 }
             }
         }
@@ -139,7 +140,7 @@ void LaserScanToOccupancyGrid::updateOccGrid(int cellX, int cellY, GridStates st
         // Inflate the cost around the cells if the state is OCCUPIED or TRAVERSABLE
         if (is_occupied || is_traversable)
         {
-            LaserScanToOccupancyGrid::inflateCostAroundCells(cellX, cellY, radius, state);
+            LaserScanToOccupancyGrid::inflateCostAroundCells(cellX, cellY, radius);
         }
         else
         {
@@ -165,11 +166,7 @@ sensor_msgs::msg::PointCloud2 LaserScanToOccupancyGrid::groundSupportSegmentatio
 
         int cell_x = robot_cell_x + floor(pointrgb.x / map_resolution_);
         int cell_y = robot_cell_y + floor(pointrgb.y / map_resolution_);
-        state = GridStates::UNKNOWN;
-        LaserScanToOccupancyGrid::updateOccGrid(cell_x, cell_y, state);
-        prior_map_update_dict_.insert({i, PriorUpdate{0.0, cell_x, cell_y, state}});
-
-        // check if consecutive points have a difference of less than 0.15 in z
+        // Classify point as ground or obstacle based on z height
         if (std::abs(pcl_cloud[i].z) <= gndClearance)
         {
             // Ground Support
@@ -177,8 +174,6 @@ sensor_msgs::msg::PointCloud2 LaserScanToOccupancyGrid::groundSupportSegmentatio
             pointrgb.g = 255;
             pointrgb.b = 0;
             state = GridStates::TRAVERSABLE;
-            LaserScanToOccupancyGrid::updateOccGrid(cell_x, cell_y, state);
-            prior_map_update_dict_.insert({i, PriorUpdate{0.0, cell_x, cell_y, state}});
         }
         else
         {
@@ -187,9 +182,9 @@ sensor_msgs::msg::PointCloud2 LaserScanToOccupancyGrid::groundSupportSegmentatio
             pointrgb.g = 0;
             pointrgb.b = 0;
             state = GridStates::OCCUPIED;
-            LaserScanToOccupancyGrid::updateOccGrid(cell_x, cell_y, state);
-            prior_map_update_dict_.insert({i, PriorUpdate{0.0, cell_x, cell_y, state}});
         }
+        LaserScanToOccupancyGrid::updateOccGrid(cell_x, cell_y, state);
+        prior_map_update_dict_[i] = PriorUpdate{0.0, cell_x, cell_y, state};
         // Add the 2D point to the PCL PointCloud
         pcl_cloud_2d.push_back(pointrgb);
     }
@@ -203,7 +198,7 @@ void LaserScanToOccupancyGrid::updatePriorMap()
     auto now = std::chrono::system_clock::now();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch());
 
-    for (auto &entry : prior_map_update_dict_)
+    for (auto& entry : prior_map_update_dict_)
     {
         auto timeElapsed = ms.count() - entry.second.time_;
         if (LaserScanToOccupancyGrid::checkbounds(entry.second.cell_x_, entry.second.cell_y_) && timeElapsed >= 2000)
@@ -221,15 +216,14 @@ void LaserScanToOccupancyGrid::updatePriorMap()
 void LaserScanToOccupancyGrid::fillwithMemory()
 {
     bool printFlag = false;
-    for (auto &entry : prior_map_update_dict_)
+    for (auto& entry : prior_map_update_dict_)
     {
         if (LaserScanToOccupancyGrid::checkbounds(entry.second.cell_x_, entry.second.cell_y_))
         {
             int occState = LaserScanToOccupancyGrid::getGridValue(entry.second.cell_x_, entry.second.cell_y_);
             int priorState = prior_map_(entry.second.cell_y_, entry.second.cell_x_);
-            if ((occState == -1 && priorState != -1) ||
-                (occState == GridStates::UNKNOWN && priorState != GridStates::UNKNOWN) ||
-                (occState == 255 && priorState != 255))
+            // UNKNOWN == 255, which wraps to -1 in int8_t OccupancyGrid data
+            if (occState == GridStates::UNKNOWN && priorState != GridStates::UNKNOWN)
             {
                 LaserScanToOccupancyGrid::setGridValue(entry.second.cell_x_, entry.second.cell_y_, priorState);
 
@@ -243,7 +237,7 @@ void LaserScanToOccupancyGrid::fillwithMemory()
 
 void LaserScanToOccupancyGrid::updateOdom(double delta_x, double delta_y, double delta_yaw)
 {
-    Eigen::Matrix3d tempMap;
+    Eigen::MatrixXd tempMap;
     tempMap.resize(occupancy_grid_msg_.info.height, occupancy_grid_msg_.info.width);
     tempMap.setConstant(GridStates::UNKNOWN);
 
@@ -262,14 +256,15 @@ void LaserScanToOccupancyGrid::updateOdom(double delta_x, double delta_y, double
     {
         for (auto j = 0; j < occupancy_grid_msg_.info.width; ++j)
         {
-            Eigen::Matrix3d cell;
-            cell << j - occupancy_grid_msg_.info.height / 2, i - occupancy_grid_msg_.info.width / 2,
-                1.0; // Transform the cell indices to the center of the grid
+            Eigen::Vector3d cell;
+            cell << j - static_cast<int>(occupancy_grid_msg_.info.width) / 2,
+                i - static_cast<int>(occupancy_grid_msg_.info.height) / 2,
+                1.0;  // Transform the cell indices to the center of the grid
 
-            Eigen::Matrix3d transformed_cell = transform * cell;
+            Eigen::Vector3d transformed_cell = transform * cell;
 
-            transformed_cell(0) += occupancy_grid_msg_.info.height / 2;
-            transformed_cell(1) += occupancy_grid_msg_.info.width / 2;
+            transformed_cell(0) += occupancy_grid_msg_.info.width / 2;
+            transformed_cell(1) += occupancy_grid_msg_.info.height / 2;
 
             // Check if the transformed cell indices are within the grid bounds
             if (LaserScanToOccupancyGrid::checkbounds(int(transformed_cell(0)), int(transformed_cell(1))))
@@ -297,7 +292,13 @@ void LaserScanToOccupancyGrid::handleOdom(const nav_msgs::msg::Odometry::SharedP
     // transform based on current and previous odom data
     double delta_x = odom->pose.pose.position.x - prev_odom_.pose.pose.position.x;
     double delta_y = odom->pose.pose.position.y - prev_odom_.pose.pose.position.y;
-    double delta_yaw = 0.0;
+
+    // Extract yaw from quaternion: yaw = atan2(2(wz + xy), 1 - 2(y^2 + z^2))
+    auto& q = odom->pose.pose.orientation;
+    double current_yaw = atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+    auto& pq = prev_odom_.pose.pose.orientation;
+    double prev_yaw = atan2(2.0 * (pq.w * pq.z + pq.x * pq.y), 1.0 - 2.0 * (pq.y * pq.y + pq.z * pq.z));
+    double delta_yaw = current_yaw - prev_yaw;
 
     LaserScanToOccupancyGrid::updateOdom(delta_x, delta_y, delta_yaw);
     prev_odom_ = *odom;
@@ -308,9 +309,9 @@ void LaserScanToOccupancyGrid::handleOdom(const nav_msgs::msg::Odometry::SharedP
     occupancy_grid_msg_.header.stamp = rclcpp::Clock().now();
     occupancy_grid_msg_.info.width = scan_size / map_resolution_;
     occupancy_grid_msg_.info.height = scan_size / map_resolution_;
-    occupancy_grid_msg_.info.resolution = map_resolution_; // Set your desired resolution
-    occupancy_grid_msg_.info.origin.position.x = 0.0;
-    occupancy_grid_msg_.info.origin.position.y = 0.0;
+    occupancy_grid_msg_.info.resolution = map_resolution_;  // Set your desired resolution
+    occupancy_grid_msg_.info.origin.position.x = -scan_size / 2.0;
+    occupancy_grid_msg_.info.origin.position.y = -scan_size / 2.0;
     occupancy_grid_publisher_->publish(occupancy_grid_msg_);
 }
 
@@ -320,12 +321,12 @@ void LaserScanToOccupancyGrid::pointCloudCallback(const sensor_msgs::msg::PointC
     //   cout << BLUE << "Point cloud callback..." << RESET << endl;
 
     pcl::PointCloud<pcl::PointXYZ> pcl_cloud;
-    pcl::fromROSMsg(*cloud_msg, pcl_cloud);                        // Convert from ROS message to PCL point cloud
-    pcl_cloud = LaserScanToOccupancyGrid::transformPCL(pcl_cloud); // Transform the point cloud to the 0,0
+    pcl::fromROSMsg(*cloud_msg, pcl_cloud);                         // Convert from ROS message to PCL point cloud
+    pcl_cloud = LaserScanToOccupancyGrid::transformPCL(pcl_cloud);  // Transform the point cloud to the 0,0
 
-    pcl::PointCloud<pcl::PointXYZRGB> pcl_cloud_2d; // Create a PCL PointCloud for 2D points
-    sensor_msgs::msg::PointCloud2 point_cloud_2d;   // Create a PointCloud2 message for 2D points with RGB color
-    pcl::toROSMsg(pcl_cloud_2d, point_cloud_2d);    // Create a PointCloud2 message for 2D points with intensity
+    pcl::PointCloud<pcl::PointXYZRGB> pcl_cloud_2d;  // Create a PCL PointCloud for 2D points
+    sensor_msgs::msg::PointCloud2 point_cloud_2d;    // Create a PointCloud2 message for 2D points with RGB color
+    pcl::toROSMsg(pcl_cloud_2d, point_cloud_2d);     // Create a PointCloud2 message for 2D points with intensity
 
     std::fill(occupancy_grid_msg_.data.begin(), occupancy_grid_msg_.data.end(), GridStates::UNKNOWN);
 
@@ -360,9 +361,9 @@ void LaserScanToOccupancyGrid::pointCloudCallback(const sensor_msgs::msg::PointC
     occupancy_grid_msg_.header.stamp = rclcpp::Clock().now();
     occupancy_grid_msg_.info.width = scan_size / map_resolution_;
     occupancy_grid_msg_.info.height = scan_size / map_resolution_;
-    occupancy_grid_msg_.info.resolution = map_resolution_; // Set your desired resolution
-    occupancy_grid_msg_.info.origin.position.x = 0.0;
-    occupancy_grid_msg_.info.origin.position.y = 0.0;
+    occupancy_grid_msg_.info.resolution = map_resolution_;  // Set your desired resolution
+    occupancy_grid_msg_.info.origin.position.x = -scan_size / 2.0;
+    occupancy_grid_msg_.info.origin.position.y = -scan_size / 2.0;
     occupancy_grid_publisher_->publish(occupancy_grid_msg_);
 
     //   cout << BLUE << "Point cloud callback finished..." << RESET << endl;
@@ -371,7 +372,7 @@ void LaserScanToOccupancyGrid::pointCloudCallback(const sensor_msgs::msg::PointC
     cout << GREEN << "Time taken for computation: " << duration.count() << " ms" << RESET << endl;
 }
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
     cout << BLUE << "[+] Starting custom Occupancy node..." << RESET << endl;
