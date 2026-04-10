@@ -14,6 +14,7 @@
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "sensor_msgs/point_field_conversion.hpp"
 #include "std_msgs/msg/color_rgba.hpp"
+
 #include <Eigen/Dense>
 #include <Eigen/Eigen>
 #include <boost/foreach.hpp>
@@ -64,12 +65,12 @@ class LaserScanToOccupancyGrid : public rclcpp::Node
         int cell_y_;
         GridStates state_;
     };
-    pcl::PointCloud<pcl::PointXYZ> transformPCL(const pcl::PointCloud<pcl::PointXYZ> &pcl_cloud);
+    pcl::PointCloud<pcl::PointXYZ> transformPCL(const pcl::PointCloud<pcl::PointXYZ>& pcl_cloud);
     sensor_msgs::msg::PointCloud2 groundSupportSegmentation(pcl::PointCloud<pcl::PointXYZ> pcl_cloud, int robot_cell_x,
                                                             int robot_cell_y);
     inline void updateOccGrid(int cellX, int cellY, GridStates state);
     inline bool checkbounds(int cellX, int cellY);
-    inline void inflateCostAroundCells(int cellX, int cellY, int radius, int cost);
+    inline void inflateCostAroundCells(int cellX, int cellY, int radius);
     inline unsigned char getCostforCell(double distance) const;
     inline void updatePriorMap();
     inline void fillwithMemory();
@@ -84,16 +85,16 @@ class LaserScanToOccupancyGrid : public rclcpp::Node
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pcl_pub_gnd_;
     nav_msgs::msg::OccupancyGrid occupancy_grid_msg_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
-    nav_msgs::msg::Odometry prev_odom_{}; // Previous odometry message
+    nav_msgs::msg::Odometry prev_odom_{};  // Previous odometry message
 
     Eigen::MatrixXd prior_map_;
-    const double map_resolution_ = 0.05; // Map resolution in meters
-    const double gndClearance = 0.254;   // 254mm
+    const double map_resolution_ = 0.05;  // Map resolution in meters
+    const double gndClearance = 0.254;    // 254mm
     const double lidarShift_ = 1.235217;
-    int scan_size = 25; // in meters
+    int scan_size = 25;  // in meters
 
     // Define a hash map to keep track of cell data including their time of update and index
     map<int, PriorUpdate> prior_map_update_dict_;
 };
 
-#endif // COSTMAP_PUB__CUSTOMCOSTMAP_HPP_
+#endif  // COSTMAP_PUB__CUSTOMCOSTMAP_HPP_
